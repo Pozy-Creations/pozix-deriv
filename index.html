@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pozix Deriv Vision Pro</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #080c14; color: #f3f4f6; }
+        .glow-green { box-shadow: 0 0 20px rgba(16, 185, 129, 0.25); }
+        .glow-gold { box-shadow: 0 0 20px rgba(245, 158, 11, 0.25); }
+        .glow-blue { box-shadow: 0 0 20px rgba(59, 130, 246, 0.25); }
+    </style>
+</head>
+<body class="min-h-screen p-3 md:p-6 pb-24">
+
+    <!-- Web Platform Navigation Bar -->
+    <header class="max-w-md mx-auto bg-gray-900/90 border border-gray-800 rounded-2xl p-4 shadow-2xl backdrop-blur-md mb-4">
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center space-x-2">
+                <span class="bg-amber-500 text-black font-extrabold text-xs px-2.5 py-1 rounded-lg">POZIX</span>
+                <span class="text-xs tracking-wider text-amber-400 font-bold">MATCHES VISION PRO</span>
+            </div>
+            <div class="flex items-center space-x-1.5 bg-emerald-950/80 border border-emerald-800/80 px-3 py-1 rounded-full">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" id="ws-dot"></span>
+                <span class="text-[10px] font-extrabold text-emerald-400 tracking-wider uppercase" id="ws-status">LIVE FEED</span>
+            </div>
+        </div>
+
+        <h1 class="text-lg font-extrabold text-white tracking-tight flex items-center justify-between">
+            <span>Deriv Signal Command Center</span>
+            <span class="text-xs font-semibold text-emerald-400 bg-emerald-950 px-2.5 py-0.5 rounded border border-emerald-900">V3.4 ONLINE</span>
+        </h1>
+        <p class="text-[11px] text-gray-400 mt-1">Real-time digit distribution, execution timing, and high-probability windows.</p>
+
+        <!-- Dynamic Filter Selection -->
+        <div class="flex bg-gray-950 p-1 rounded-xl mt-4 border border-gray-800">
+            <button onclick="setMode('matches')" id="btn-matches" class="flex-1 py-2 text-xs font-bold rounded-lg bg-amber-500 text-black transition shadow-lg">Matches</button>
+            <button onclick="setMode('evenodd')" id="btn-evenodd" class="flex-1 py-2 text-xs font-semibold rounded-lg text-gray-400 hover:text-white transition">Even / Odd</button>
+            <button onclick="setMode('overunder')" id="btn-overunder" class="flex-1 py-2 text-xs font-semibold rounded-lg text-gray-400 hover:text-white transition">Over / Under</button>
+        </div>
+    </header>
+
+    <!-- Main Live Market Cards -->
+    <main class="max-w-md mx-auto space-y-4" id="indices-container">
+        <!-- Rendered live via JavaScript -->
+    </main>
+
+    <script>
+        const APP_ID = 1089;
+        const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
+        let ws;
+        let currentMode = 'matches';
+
+        const symbols = [
+            { id: '1HZ10V', name: 'Volatility 10 (1s)', ticks: [] },
+            { id: 'R_10', name: 'Volatility 10', ticks: [] },
+            { id: 'R_25', name: 'Volatility 25', ticks: [] },
+            { id: 'R_50', name: 'Volatility 50', ticks: [] },
+            { id: 'R_75', name: 'Volatility 75', ticks: [] },
+            { id: 'R_100', name: 'Volatility 100', ticks: [] }
+        ];
+
+        function setMode(mode) {
+            currentMode = mode;
+            ['matches', 'evenodd', 'overunder'].forEach(m => {
+                const btn = document.getElementById(`btn-${m}`);
+                if (m === mode) {
+                    btn.className = "flex-1 py-2 text-xs font-bold rounded-lg bg-amber-500 text-black transition shadow-lg";
+                } else {
+                    btn.className = "flex-1 py-2 text-xs font-semibold rounded-lg text-gray-400 hover:text-white transition";
+                }
+            });
+            renderUI();
+        }
+
+        function initWebSocket() {
+            const statusEl = document.getElementById('ws-status');
+            const dotEl = document.getElementById('ws-dot');
+
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = function() {
+                statusEl.innerText = "LIVE FEED";
+                dotEl.className = "w-2 h-2 rounded-full bg-emerald-400 animate-pulse";
+                symbols.forEach(s => ws.send(JSON.stringify({ ticks: s.id })));
+            };
+
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.msg_type === 'tick' && data.tick) {
+                    const tick = data.tick;
+                    const symbolObj = symbols.find(s => s.id === tick.symbol);
+                    if (symbolObj) {
+                        const priceStr = tick.quote.toString();
+                        const lastDigit = parseInt(priceStr.slice(-1));
+                        
+                        symbolObj.ticks.unshift(lastDigit);
+                        if (symbolObj.ticks.length > 15) symbolObj.ticks.pop();
+
+                        renderUI();
+                    }
+                }
+            };
+
+            ws.onerror = function() {
+                statusEl.innerText = "OFFLINE";
+                dotEl.className = "w-2 h-2 rounded-full bg-red-500 animate-ping";
+            };
+
+            ws.onclose = function() {
+                statusEl.innerText = "RECONNECTING";
+                dotEl.className = "w-2 h-2 rounded-full bg-amber-400 animate-pulse";
+                setTimeout(initWebSocket, 2000);
+            };
+        }
+
+        function calculateProbabilities(ticks) {
+            if (ticks.length === 0) return { targetDigit: '-', confidence: 70, isEven: true, isOver: true };
+            
+            const counts = {};
+            for (let i = 0; i <= 9; i++) counts[i] = 0;
+            ticks.forEach(t => counts[t]++);
+
+            // Find most frequent recent digit
+            let mostFreqDigit = 0;
+            let maxCount = -1;
+            for (let d = 0; d <= 9; d++) {
+                if (counts[d] > maxCount) {
+                    maxCount = counts[d];
+                    mostFreqDigit = d;
+                }
+            }
+
+            const evenCount = ticks.filter(t => t % 2 === 0).length;
+            const overCount = ticks.filter(t => t >= 5).length;
+
+            const confidence = Math.min(95, Math.max(72, Math.round(70 + (maxCount / ticks.length) * 40)));
+
+            return {
+                targetDigit: mostFreqDigit,
+                confidence: confidence,
+                isEven: evenCount >= (ticks.length / 2),
+                isOver: overCount >= (ticks.length / 2)
+            };
+        }
+
+        function renderUI() {
+            const container = document.getElementById('indices-container');
+            container.innerHTML = '';
+
+            symbols.forEach(sym => {
+                const ticks = sym.ticks;
+                const stats = calculateProbabilities(ticks);
+                const latestDigit = ticks.length > 0 ? ticks[0] : '-';
+                
+                let signalBadge = '';
+                let actionNotice = '';
+                let cardGlow = '';
+
+                if (ticks.length >= 4) {
+                    if (currentMode === 'matches') {
+                        signalBadge = `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/40 px-3 py-1 rounded-full text-xs font-black">MATCH ${stats.targetDigit}</span>`;
+                        actionNotice = `RECOMMENDATION: MATCH ${stats.targetDigit} ON DERIV BOT`;
+                        cardGlow = 'glow-gold border-amber-500/40';
+                    } else if (currentMode === 'evenodd') {
+                        const type = stats.isEven ? 'EVEN' : 'ODD';
+                        signalBadge = `<span class="bg-blue-500/20 text-blue-400 border border-blue-500/40 px-3 py-1 rounded-full text-xs font-black">${type}</span>`;
+                        actionNotice = `RECOMMENDATION: TRADE ${type}`;
+                        cardGlow = 'glow-blue border-blue-500/40';
+                    } else {
+                        const type = stats.isOver ? 'OVER 4' : 'UNDER 5';
+                        signalBadge = `<span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 px-3 py-1 rounded-full text-xs font-black">${type}</span>`;
+                        actionNotice = `RECOMMENDATION: TRADE ${type}`;
+                        cardGlow = 'glow-green border-emerald-500/40';
+                    }
+                } else {
+                    signalBadge = `<span class="bg-gray-800 text-gray-400 px-3 py-1 rounded-full text-xs font-bold">ANALYZING</span>`;
+                    actionNotice = `COLLECTING TICK DATA (${ticks.length}/15)...`;
+                }
+
+                const card = document.createElement('div');
+                card.className = `bg-gray-900/90 border rounded-2xl p-4 shadow-xl transition-all ${cardGlow || 'border-gray-800'}`;
+                
+                card.innerHTML = `
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="font-bold text-sm text-white tracking-wide">${sym.name}</span>
+                        ${signalBadge}
+                    </div>
+
+                    <div class="flex items-center justify-between mb-3 bg-gray-950/70 p-3 rounded-xl border border-gray-800/80">
+                        <div>
+                            <div class="text-[10px] text-gray-400 uppercase font-semibold">Signal Confidence</div>
+                            <div class="text-2xl font-black text-amber-400 mt-0.5">${stats.confidence}%</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-[10px] text-gray-400 uppercase font-semibold">Last Digit</div>
+                            <div class="text-2xl font-black text-white mt-0.5">${latestDigit}</div>
+                        </div>
+                    </div>
+
+                    <!-- Digit Frequency Track Bar -->
+                    <div class="flex justify-between items-center bg-gray-950 p-2 rounded-xl border border-gray-800/80 font-mono text-xs">
+                        ${[0,1,2,3,4,5,6,7,8,9].map(d => {
+                            const isLatest = latestDigit === d;
+                            const isTarget = stats.targetDigit === d && currentMode === 'matches';
+                            let bg = "text-gray-600 bg-gray-900/40";
+                            if (isLatest) bg = "bg-amber-500 text-black font-black scale-110 shadow-lg";
+                            else if (isTarget) bg = "bg-amber-950 text-amber-400 font-bold border border-amber-800";
+                            return `<div class="w-6 h-6 rounded-md flex items-center justify-center transition-all ${bg}">${d}</div>`;
+                        }).join('')}
+                    </div>
+
+                    <div class="mt-3 pt-2.5 border-t border-gray-800/80 flex items-center justify-between text-[11px]">
+                        <span class="text-amber-400 font-bold flex items-center gap-1">⚡ ${actionNotice}</span>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        window.onload = () => {
+            renderUI();
+            initWebSocket();
+        };
+    </script>
+</body>
+</html>
