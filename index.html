@@ -24,13 +24,19 @@
             </div>
             <div class="flex items-center space-x-1.5 bg-emerald-950/80 border border-emerald-800/80 px-3 py-1 rounded-full">
                 <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse" id="ws-dot"></span>
-                <span class="text-[10px] font-extrabold text-amber-400 tracking-wider uppercase" id="ws-status">CONNECTING</span>
+                <span class="text-[10px] font-extrabold text-amber-400 tracking-wider uppercase" id="ws-status">INITIALIZING</span>
             </div>
+        </div>
+
+        <!-- Real-time Diagnostic Monitor -->
+        <div class="bg-black/60 rounded-lg p-2 mb-3 border border-gray-800 font-mono text-[10px] text-gray-400 flex justify-between items-center" id="diag-bar">
+            <span>SOCKET DIAGNOSTIC:</span>
+            <span class="text-amber-400 font-bold" id="diag-msg">Connecting to server...</span>
         </div>
 
         <h1 class="text-lg font-extrabold text-white tracking-tight flex items-center justify-between">
             <span>Deriv Signal Command Center</span>
-            <span class="text-xs font-semibold text-emerald-400 bg-emerald-950 px-2.5 py-0.5 rounded border border-emerald-900">V3.5 LIVE</span>
+            <span class="text-xs font-semibold text-emerald-400 bg-emerald-950 px-2.5 py-0.5 rounded border border-emerald-900">V3.6 LIVE</span>
         </h1>
         <p class="text-[11px] text-gray-400 mt-1">Real-time digit distribution, execution timing, and high-probability windows.</p>
 
@@ -43,16 +49,18 @@
     </header>
 
     <!-- Main Container -->
-    <main class="max-w-md mx-auto space-y-4" id="indices-container">
-        <!-- Live Rendered -->
-    </main>
+    <main class="max-w-md mx-auto space-y-4" id="indices-container"></main>
 
     <script>
         const APP_ID = 1089;
-        const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
-        let ws;
+        const ENDPOINTS = [
+            `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`,
+            `wss://frontend.derivws.com/websockets/v3?app_id=${APP_ID}`
+        ];
+        let currentEndpointIdx = 0;
+        let ws = null;
         let currentMode = 'matches';
-        let pingInterval;
+        let pingTimer = null;
 
         const symbols = [
             { id: '1HZ10V', name: 'Volatility 10 (1s)', ticks: [] },
@@ -62,6 +70,14 @@
             { id: 'R_75', name: 'Volatility 75', ticks: [] },
             { id: 'R_100', name: 'Volatility 100', ticks: [] }
         ];
+
+        function logDiag(msg, isError = false) {
+            const diagEl = document.getElementById('diag-msg');
+            if (diagEl) {
+                diagEl.innerText = msg;
+                diagEl.className = isError ? "text-red-400 font-bold" : "text-amber-400 font-bold";
+            }
+        }
 
         function setMode(mode) {
             currentMode = mode;
@@ -80,61 +96,86 @@
             const statusEl = document.getElementById('ws-status');
             const dotEl = document.getElementById('ws-dot');
 
-            if (ws) ws.close();
+            if (ws) {
+                ws.onopen = null;
+                ws.onmessage = null;
+                ws.onerror = null;
+                ws.onclose = null;
+                ws.close();
+            }
 
-            ws = new WebSocket(WS_URL);
+            const activeUrl = ENDPOINTS[currentEndpointIdx];
+            logDiag(`Connecting to server [${currentEndpointIdx + 1}]...`);
+
+            ws = new WebSocket(activeUrl);
 
             ws.onopen = function() {
-                statusEl.innerText = "LIVE FEED";
-                statusEl.className = "text-[10px] font-extrabold text-emerald-400 tracking-wider uppercase";
-                dotEl.className = "w-2 h-2 rounded-full bg-emerald-400 animate-pulse";
-                
-                // Subscribe to all symbols
+                logDiag("Connected! Initializing stream...");
+                statusEl.innerText = "CONNECTED";
+                statusEl.className = "text-[10px] font-extrabold text-blue-400 tracking-wider uppercase";
+                dotEl.className = "w-2 h-2 rounded-full bg-blue-400 animate-pulse";
+
+                // Step 1: Send Heartbeat Ping
+                ws.send(JSON.stringify({ ping: 1 }));
+
+                // Step 2: Subscribe to all ticks
                 symbols.forEach(s => {
                     ws.send(JSON.stringify({ ticks: s.id, subscribe: 1 }));
                 });
 
-                // Keep-alive ping every 30s
-                if (pingInterval) clearInterval(pingInterval);
-                pingInterval = setInterval(() => {
-                    if (ws.readyState === WebSocket.OPEN) {
+                if (pingTimer) clearInterval(pingTimer);
+                pingTimer = setInterval(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify({ ping: 1 }));
                     }
-                }, 30000);
+                }, 15000);
             };
 
             ws.onmessage = function(event) {
-                const data = JSON.parse(event.data);
-                if (data.msg_type === 'tick' && data.tick) {
-                    const tick = data.tick;
-                    const symbolObj = symbols.find(s => s.id === tick.symbol || s.id === tick.pip_size);
-                    // Match symbol flexibly
-                    const targetSym = symbols.find(s => tick.symbol.includes(s.id.replace('1HZ','1HZ')));
+                try {
+                    const data = JSON.parse(event.data);
                     
-                    const matchObj = symbols.find(s => s.id === tick.symbol);
-                    if (matchObj) {
-                        const priceStr = tick.quote.toFixed(tick.pip_size || 2);
-                        const lastDigit = parseInt(priceStr.slice(-1));
-                        
-                        matchObj.ticks.unshift(lastDigit);
-                        if (matchObj.ticks.length > 15) matchObj.ticks.pop();
-
-                        renderUI();
+                    if (data.msg_type === 'ping') {
+                        statusEl.innerText = "LIVE FEED";
+                        statusEl.className = "text-[10px] font-extrabold text-emerald-400 tracking-wider uppercase";
+                        dotEl.className = "w-2 h-2 rounded-full bg-emerald-400 animate-pulse";
+                        logDiag("Live ticks streaming active");
                     }
+
+                    if (data.msg_type === 'tick' && data.tick) {
+                        const tick = data.tick;
+                        const matchObj = symbols.find(s => s.id === tick.symbol);
+                        if (matchObj) {
+                            const priceStr = tick.quote.toFixed(tick.pip_size || 2);
+                            const lastDigit = parseInt(priceStr.slice(-1));
+                            
+                            matchObj.ticks.unshift(lastDigit);
+                            if (matchObj.ticks.length > 15) matchObj.ticks.pop();
+
+                            renderUI();
+                        }
+                    }
+                } catch (e) {
+                    logDiag("Data parse error", true);
                 }
             };
 
-            ws.onerror = function() {
+            ws.onerror = function(err) {
+                logDiag("Connection error encountered", true);
                 statusEl.innerText = "ERROR";
                 statusEl.className = "text-[10px] font-extrabold text-red-400 tracking-wider uppercase";
                 dotEl.className = "w-2 h-2 rounded-full bg-red-500";
             };
 
             ws.onclose = function() {
+                logDiag("Retrying socket fallback...", true);
                 statusEl.innerText = "RECONNECTING";
                 statusEl.className = "text-[10px] font-extrabold text-amber-400 tracking-wider uppercase";
                 dotEl.className = "w-2 h-2 rounded-full bg-amber-400 animate-pulse";
-                setTimeout(initWebSocket, 3000);
+                
+                // Switch endpoint fallback
+                currentEndpointIdx = (currentEndpointIdx + 1) % ENDPOINTS.length;
+                setTimeout(initWebSocket, 2500);
             };
         }
 
@@ -220,7 +261,6 @@
                         </div>
                     </div>
 
-                    <!-- Digit Frequency Track Bar -->
                     <div class="flex justify-between items-center bg-gray-950 p-2 rounded-xl border border-gray-800/80 font-mono text-xs">
                         ${[0,1,2,3,4,5,6,7,8,9].map(d => {
                             const isLatest = latestDigit === d;
