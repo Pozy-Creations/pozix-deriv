@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15,7 +16,7 @@
 </head>
 <body class="min-h-screen p-3 md:p-6 pb-24">
 
-    <!-- Web Platform Navigation Bar -->
+    <!-- Header Navigation -->
     <header class="max-w-md mx-auto bg-gray-900/90 border border-gray-800 rounded-2xl p-4 shadow-2xl backdrop-blur-md mb-4">
         <div class="flex items-center justify-between mb-3">
             <div class="flex items-center space-x-2">
@@ -24,7 +25,7 @@
             </div>
             <div class="flex items-center space-x-1.5 bg-emerald-950/80 border border-emerald-800/80 px-3 py-1 rounded-full">
                 <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" id="ws-dot"></span>
-                <span class="text-[10px] font-extrabold text-emerald-400 tracking-wider uppercase" id="ws-status">LIVE FEED</span>
+                <span class="text-[10px] font-extrabold text-emerald-400 tracking-wider uppercase" id="ws-status">CONNECTING...</span>
             </div>
         </div>
 
@@ -42,9 +43,9 @@
         </div>
     </header>
 
-    <!-- Main Live Market Cards -->
+    <!-- Main Container -->
     <main class="max-w-md mx-auto space-y-4" id="indices-container">
-        <!-- Rendered live via JavaScript -->
+        <!-- Live Rendered -->
     </main>
 
     <script>
@@ -84,7 +85,11 @@
             ws.onopen = function() {
                 statusEl.innerText = "LIVE FEED";
                 dotEl.className = "w-2 h-2 rounded-full bg-emerald-400 animate-pulse";
-                symbols.forEach(s => ws.send(JSON.stringify({ ticks: s.id })));
+                
+                // Subscribe to tick streams
+                symbols.forEach(s => {
+                    ws.send(JSON.stringify({ ticks: s.id }));
+                });
             };
 
             ws.onmessage = function(event) {
@@ -93,8 +98,8 @@
                     const tick = data.tick;
                     const symbolObj = symbols.find(s => s.id === tick.symbol);
                     if (symbolObj) {
-                        const priceStr = tick.quote.toString();
-                        const lastDigit = parseInt(priceStr.slice(-1));
+                        const price = tick.quote.toFixed(tick.pip_size || 2);
+                        const lastDigit = parseInt(price.slice(-1));
                         
                         symbolObj.ticks.unshift(lastDigit);
                         if (symbolObj.ticks.length > 15) symbolObj.ticks.pop();
@@ -123,7 +128,6 @@
             for (let i = 0; i <= 9; i++) counts[i] = 0;
             ticks.forEach(t => counts[t]++);
 
-            // Find most frequent recent digit
             let mostFreqDigit = 0;
             let maxCount = -1;
             for (let d = 0; d <= 9; d++) {
@@ -135,7 +139,6 @@
 
             const evenCount = ticks.filter(t => t % 2 === 0).length;
             const overCount = ticks.filter(t => t >= 5).length;
-
             const confidence = Math.min(95, Math.max(72, Math.round(70 + (maxCount / ticks.length) * 40)));
 
             return {
@@ -159,10 +162,10 @@
                 let actionNotice = '';
                 let cardGlow = '';
 
-                if (ticks.length >= 4) {
+                if (ticks.length >= 3) {
                     if (currentMode === 'matches') {
                         signalBadge = `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/40 px-3 py-1 rounded-full text-xs font-black">MATCH ${stats.targetDigit}</span>`;
-                        actionNotice = `RECOMMENDATION: MATCH ${stats.targetDigit} ON DERIV BOT`;
+                        actionNotice = `RECOMMENDATION: MATCH ${stats.targetDigit}`;
                         cardGlow = 'glow-gold border-amber-500/40';
                     } else if (currentMode === 'evenodd') {
                         const type = stats.isEven ? 'EVEN' : 'ODD';
